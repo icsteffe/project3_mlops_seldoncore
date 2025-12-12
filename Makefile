@@ -1,0 +1,321 @@
+# Makefile for Seldon Core MLOps Project
+# This file provides simple commands to manage the entire deployment lifecycle
+
+# Variables
+CLUSTER_NAME ?= mlops-seldon
+MODEL_NAME ?= distilbert-classifier
+DOCKER_IMAGE ?= distilbert-serving:latest
+MODEL_DIR ?= exported_model
+NAMESPACE ?= default
+
+# Default target - show available commands
+.PHONY: help
+help:
+	@echo "════════════════════════════════════════════════════════════════"
+	@echo "  Seldon Core MLOps Project - Available Commands"
+	@echo "════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "  Setup & Installation:"
+	@echo "    make setup            - Complete local K8s setup (Kind + Seldon Core)"
+	@echo "    make setup-cluster    - Create Kind cluster only"
+	@echo "    make install-seldon   - Install Seldon Core only"
+	@echo ""
+	@echo "  Model Deployment:"
+	@echo "    make build-image      - Build Docker image for inference server"
+	@echo "    make deploy           - Deploy model to Kubernetes"
+	@echo "    make undeploy         - Remove model deployment"
+	@echo "    make redeploy         - Rebuild and redeploy (build + deploy)"
+	@echo ""
+	@echo "  Testing & Validation:"
+	@echo "    make test             - Send sample inference requests"
+	@echo "    make test-health      - Check model health status"
+	@echo "    make test-load        - Run basic load test"
+	@echo ""
+	@echo "  Monitoring & Debugging:"
+	@echo "    make logs             - View model server logs"
+	@echo "    make status           - Check deployment status"
+	@echo "    make metrics          - View Prometheus metrics"
+	@echo "    make describe         - Detailed resource information"
+	@echo ""
+	@echo "  Port Forwarding (Access from localhost):"
+	@echo "    make forward          - Forward model API port (8000 -> localhost:8000)"
+	@echo "    make forward-metrics  - Forward metrics port (8000 -> localhost:8001)"
+	@echo ""
+	@echo "  Cleanup:"
+	@echo "    make cleanup          - Remove deployment and cluster"
+	@echo "    make cleanup-deploy   - Remove deployment only (keep cluster)"
+	@echo "    make cleanup-cluster  - Delete Kind cluster only"
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════"
+
+#═══════════════════════════════════════════════════════════════════════
+# SETUP - Install all dependencies and create local Kubernetes cluster
+#═══════════════════════════════════════════════════════════════════════
+
+.PHONY: setup
+setup: check-prerequisites setup-cluster install-seldon
+	@echo "✓ Setup complete!"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Export a trained model:  python export_model.py --checkpoint <path>"
+	@echo "  2. Build inference image:   make build-image"
+	@echo "  3. Deploy to Kubernetes:    make deploy"
+
+.PHONY: check-prerequisites
+check-prerequisites:
+	@echo "Checking prerequisites..."
+	@if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { Write-Host "❌ Docker is required but not installed. See: https://docs.docker.com/get-docker/"; exit 1; }
+	@if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) { Write-Host "❌ kubectl is required but not installed. See: https://kubernetes.io/docs/tasks/tools/"; exit 1; }
+	@if (-not (Get-Command kind -ErrorAction SilentlyContinue)) { Write-Host "❌ Kind is required but not installed. See: https://kind.sigs.k8s.io/docs/user/quick-start/#installation"; exit 1; }
+	@if (-not (Get-Command helm -ErrorAction SilentlyContinue)) { Write-Host "❌ Helm is required but not installed. See: https://helm.sh/docs/intro/install/"; exit 1; }
+	@echo "✓ All prerequisites installed"
+
+.PHONY: setup-cluster
+setup-cluster:
+	@echo "Creating Kind cluster '$(CLUSTER_NAME)'..."
+	@if kind get clusters | grep -q "^$(CLUSTER_NAME)$$"; then \
+		echo "⚠ Cluster '$(CLUSTER_NAME)' already exists"; \
+	else \
+		kind create cluster --name $(CLUSTER_NAME) --config kind-config.yaml || \
+		kind create cluster --name $(CLUSTER_NAME); \
+		echo "✓ Cluster created"; \
+	fi
+	@kubectl cluster-info --context kind-$(CLUSTER_NAME)
+
+.PHONY: install-seldon
+install-seldon:
+	@echo "Installing Seldon Core v1.17.1..."
+	@# Create namespace for Seldon system components
+	@kubectl create namespace seldon-system --dry-run=client -o yaml | kubectl apply -f -
+	@# Install Seldon Core using Helm
+	@# Why Helm? It manages all Seldon components (CRDs, operator, webhooks) together
+	@helm repo add seldonio https://storage.googleapis.com/seldon-charts || true
+	@helm repo update
+	@helm upgrade --install seldon-core seldonio/seldon-core-operator \
+		--namespace seldon-system \
+		--version 1.17.1 \
+		--set usageMetrics.enabled=false \
+		--set istio.enabled=false \
+		--wait \
+		--timeout 5m
+	@echo "✓ Seldon Core installed"
+	@echo "Waiting for Seldon operator to be ready..."
+	@kubectl wait --for=condition=available --timeout=300s \
+		deployment/seldon-controller-manager -n seldon-system
+	@echo "✓ Seldon Core is ready"
+
+#═══════════════════════════════════════════════════════════════════════
+# BUILD - Create Docker image with inference server
+#═══════════════════════════════════════════════════════════════════════
+
+.PHONY: build-image
+build-image:
+	@echo "Building Docker image '$(DOCKER_IMAGE)'..."
+	@# Build the image from model-serving directory
+	@docker build -t $(DOCKER_IMAGE) ./model-serving
+	@echo "✓ Image built successfully"
+	@# Load image into Kind cluster so Kubernetes can use it
+	@# Kind clusters can't pull from local Docker registry by default
+	@echo "Loading image into Kind cluster..."
+	@kind load docker-image $(DOCKER_IMAGE) --name $(CLUSTER_NAME)
+	@echo "✓ Image loaded into cluster"
+
+#═══════════════════════════════════════════════════════════════════════
+# DEPLOY - Deploy model to Kubernetes using Seldon Core
+#═══════════════════════════════════════════════════════════════════════
+
+.PHONY: deploy
+deploy: check-model-export
+	@echo "Deploying model to Kubernetes..."
+	@# Create ConfigMap with model files
+	@# This makes the model available to the inference container
+	@kubectl create configmap $(MODEL_NAME)-model \
+		--from-file=$(MODEL_DIR) \
+		--namespace=$(NAMESPACE) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ Model files uploaded as ConfigMap"
+	@# Apply the SeldonDeployment manifest
+	@# This creates the deployment, service, and monitoring resources
+	@kubectl apply -f k8s/seldon-deployment.yaml
+	@echo "✓ SeldonDeployment created"
+	@echo "Waiting for deployment to be ready..."
+	@kubectl wait --for=condition=ready pod \
+		-l app=$(MODEL_NAME)-default-0-classifier \
+		--namespace=$(NAMESPACE) \
+		--timeout=300s || true
+	@echo ""
+	@echo "✓ Deployment complete!"
+	@echo ""
+	@make status
+
+.PHONY: check-model-export
+check-model-export:
+	@if [ ! -d "$(MODEL_DIR)" ]; then \
+		echo "❌ Model directory '$(MODEL_DIR)' not found"; \
+		echo ""; \
+		echo "Please export a trained model first:"; \
+		echo "  python export_model.py --checkpoint <path-to-checkpoint.ckpt>"; \
+		echo ""; \
+		exit 1; \
+	fi
+
+.PHONY: undeploy
+undeploy:
+	@echo "Removing deployment..."
+	@kubectl delete -f k8s/seldon-deployment.yaml --ignore-not-found=true
+	@kubectl delete configmap $(MODEL_NAME)-model --ignore-not-found=true
+	@echo "✓ Deployment removed"
+
+.PHONY: redeploy
+redeploy: undeploy build-image deploy
+	@echo "✓ Redeployment complete"
+
+#═══════════════════════════════════════════════════════════════════════
+# TEST - Validate the deployment works correctly
+#═══════════════════════════════════════════════════════════════════════
+
+.PHONY: test
+test:
+	@echo "Sending test inference requests..."
+	@echo ""
+	@# Test with sample MRPC sentence pairs
+	@echo "Test 1: Similar sentences (should predict 1 = paraphrase)"
+	@kubectl run -it --rm test-client --image=curlimages/curl:latest --restart=Never -- \
+		curl -s -X POST http://$(MODEL_NAME)-default.$(NAMESPACE):8000/api/v1.0/predictions \
+		-H 'Content-Type: application/json' \
+		-d '{"data": {"ndarray": [["The cat sat on the mat", "A cat was sitting on a mat"]]}}' \
+		| python -m json.tool || echo "Request sent"
+	@echo ""
+	@echo "Test 2: Different sentences (should predict 0 = not paraphrase)"
+	@kubectl run -it --rm test-client --image=curlimages/curl:latest --restart=Never -- \
+		curl -s -X POST http://$(MODEL_NAME)-default.$(NAMESPACE):8000/api/v1.0/predictions \
+		-H 'Content-Type: application/json' \
+		-d '{"data": {"ndarray": [["The weather is nice", "I like pizza"]]}}' \
+		| python -m json.tool || echo "Request sent"
+
+.PHONY: test-health
+test-health:
+	@echo "Checking model health..."
+	@kubectl run -it --rm test-client --image=curlimages/curl:latest --restart=Never -- \
+		curl -s http://$(MODEL_NAME)-default.$(NAMESPACE):8000/health/status
+
+.PHONY: test-load
+test-load:
+	@echo "Running basic load test (100 requests)..."
+	@echo "This tests if the model can handle concurrent requests"
+	@for i in $$(seq 1 100); do \
+		kubectl run test-client-$$i --image=curlimages/curl:latest --restart=Never -- \
+		curl -s -X POST http://$(MODEL_NAME)-default.$(NAMESPACE):8000/api/v1.0/predictions \
+		-H 'Content-Type: application/json' \
+		-d '{"data": {"ndarray": [["test sentence 1", "test sentence 2"]]}}' & \
+	done
+	@echo "Load test started. Check 'make logs' for results"
+
+#═══════════════════════════════════════════════════════════════════════
+# MONITOR - View logs, metrics, and deployment status
+#═══════════════════════════════════════════════════════════════════════
+
+.PHONY: logs
+logs:
+	@echo "Streaming logs from model server..."
+	@echo "Press Ctrl+C to stop"
+	@kubectl logs -f -l app=$(MODEL_NAME)-default-0-classifier --tail=50
+
+.PHONY: status
+status:
+	@echo "════════════════════════════════════════════════════════════════"
+	@echo "  Deployment Status"
+	@echo "════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "SeldonDeployment:"
+	@kubectl get seldondeployment $(MODEL_NAME) -o wide || echo "Not found"
+	@echo ""
+	@echo "Pods:"
+	@kubectl get pods -l app=$(MODEL_NAME)-default-0-classifier -o wide
+	@echo ""
+	@echo "Services:"
+	@kubectl get svc -l app=$(MODEL_NAME)
+	@echo ""
+	@echo "To access the model:"
+	@echo "  1. Port forward:  make forward"
+	@echo "  2. Send request:  make test"
+
+.PHONY: describe
+describe:
+	@echo "Detailed deployment information:"
+	@echo ""
+	@echo "═══ SeldonDeployment ═══"
+	@kubectl describe seldondeployment $(MODEL_NAME)
+	@echo ""
+	@echo "═══ Pods ═══"
+	@kubectl describe pods -l app=$(MODEL_NAME)-default-0-classifier
+	@echo ""
+	@echo "═══ Events ═══"
+	@kubectl get events --sort-by=.metadata.creationTimestamp | tail -20
+
+.PHONY: metrics
+metrics:
+	@echo "Fetching Prometheus metrics..."
+	@kubectl run -it --rm metrics-client --image=curlimages/curl:latest --restart=Never -- \
+		curl -s http://$(MODEL_NAME)-default.$(NAMESPACE):8000/prometheus
+
+#═══════════════════════════════════════════════════════════════════════
+# PORT FORWARDING - Access services from localhost
+#═══════════════════════════════════════════════════════════════════════
+
+.PHONY: forward
+forward:
+	@echo "Forwarding model API to localhost:8000..."
+	@echo "You can now send requests to: http://localhost:8000"
+	@echo ""
+	@echo "Example with curl:"
+	@echo '  curl -X POST http://localhost:8000/api/v1.0/predictions \'
+	@echo '    -H "Content-Type: application/json" \'
+	@echo '    -d '"'"'{"data": {"ndarray": [["sentence 1", "sentence 2"]]}}'"'"
+	@echo ""
+	@echo "Press Ctrl+C to stop forwarding"
+	@kubectl port-forward svc/$(MODEL_NAME)-default 8000:8000
+
+.PHONY: forward-metrics
+forward-metrics:
+	@echo "Forwarding metrics to localhost:8001..."
+	@echo "View metrics at: http://localhost:8001/prometheus"
+	@echo "Press Ctrl+C to stop"
+	@kubectl port-forward svc/$(MODEL_NAME)-default 8001:8000
+
+#═══════════════════════════════════════════════════════════════════════
+# CLEANUP - Remove deployments and cluster
+#═══════════════════════════════════════════════════════════════════════
+
+.PHONY: cleanup
+cleanup: cleanup-deploy cleanup-cluster
+	@echo "✓ Complete cleanup finished"
+
+.PHONY: cleanup-deploy
+cleanup-deploy:
+	@echo "Removing deployment and resources..."
+	@kubectl delete seldondeployment $(MODEL_NAME) --ignore-not-found=true
+	@kubectl delete configmap $(MODEL_NAME)-model --ignore-not-found=true
+	@kubectl delete svc $(MODEL_NAME)-external --ignore-not-found=true
+	@echo "✓ Deployment cleaned up"
+
+.PHONY: cleanup-cluster
+cleanup-cluster:
+	@echo "Deleting Kind cluster '$(CLUSTER_NAME)'..."
+	@kind delete cluster --name $(CLUSTER_NAME)
+	@echo "✓ Cluster deleted"
+
+#═══════════════════════════════════════════════════════════════════════
+# UTILITY TARGETS
+#═══════════════════════════════════════════════════════════════════════
+
+.PHONY: shell
+shell:
+	@echo "Opening shell in model container..."
+	@kubectl exec -it $$(kubectl get pod -l app=$(MODEL_NAME)-default-0-classifier -o jsonpath='{.items[0].metadata.name}') -- /bin/bash
+
+.PHONY: kubectl-config
+kubectl-config:
+	@echo "Configuring kubectl context..."
+	@kubectl config use-context kind-$(CLUSTER_NAME)
+	@echo "✓ kubectl configured to use Kind cluster"
