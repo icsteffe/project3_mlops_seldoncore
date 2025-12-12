@@ -64,31 +64,22 @@ setup: check-prerequisites setup-cluster install-seldon
 .PHONY: check-prerequisites
 check-prerequisites:
 	@echo "Checking prerequisites..."
-	@if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { Write-Host "❌ Docker is required but not installed. See: https://docs.docker.com/get-docker/"; exit 1; }
-	@if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) { Write-Host "❌ kubectl is required but not installed. See: https://kubernetes.io/docs/tasks/tools/"; exit 1; }
-	@if (-not (Get-Command kind -ErrorAction SilentlyContinue)) { Write-Host "❌ Kind is required but not installed. See: https://kind.sigs.k8s.io/docs/user/quick-start/#installation"; exit 1; }
-	@if (-not (Get-Command helm -ErrorAction SilentlyContinue)) { Write-Host "❌ Helm is required but not installed. See: https://helm.sh/docs/intro/install/"; exit 1; }
+	@powershell -Command "if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { Write-Host \"❌ Docker is required but not installed. See: https://docs.docker.com/get-docker/\"; exit 1; }"
+	@powershell -Command "if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) { Write-Host \"❌ kubectl is required but not installed. See: https://kubernetes.io/docs/tasks/tools/\"; exit 1; }"
+	@powershell -Command "if (-not (Get-Command kind -ErrorAction SilentlyContinue)) { Write-Host \"❌ Kind is required but not installed. See: https://kind.sigs.k8s.io/docs/user/quick-start/#installation\"; exit 1; }"
+	@powershell -Command "if (-not (Get-Command helm -ErrorAction SilentlyContinue)) { Write-Host \"❌ Helm is required but not installed. See: https://helm.sh/docs/intro/install/\"; exit 1; }"
 	@echo "✓ All prerequisites installed"
 
 .PHONY: setup-cluster
 setup-cluster:
 	@echo "Creating Kind cluster '$(CLUSTER_NAME)'..."
-	@if kind get clusters | grep -q "^$(CLUSTER_NAME)$$"; then \
-		echo "⚠ Cluster '$(CLUSTER_NAME)' already exists"; \
-	else \
-		kind create cluster --name $(CLUSTER_NAME) --config kind-config.yaml || \
-		kind create cluster --name $(CLUSTER_NAME); \
-		echo "✓ Cluster created"; \
-	fi
+	@powershell -File "./scripts/setup-kind-cluster.ps1" -ClusterName "$(CLUSTER_NAME)"
 	@kubectl cluster-info --context kind-$(CLUSTER_NAME)
 
 .PHONY: install-seldon
 install-seldon:
 	@echo "Installing Seldon Core v1.17.1..."
-	@# Create namespace for Seldon system components
 	@kubectl create namespace seldon-system --dry-run=client -o yaml | kubectl apply -f -
-	@# Install Seldon Core using Helm
-	@# Why Helm? It manages all Seldon components (CRDs, operator, webhooks) together
 	@helm repo add seldonio https://storage.googleapis.com/seldon-charts || true
 	@helm repo update
 	@helm upgrade --install seldon-core seldonio/seldon-core-operator \
@@ -111,14 +102,10 @@ install-seldon:
 .PHONY: build-image
 build-image:
 	@echo "Building Docker image '$(DOCKER_IMAGE)'..."
-	@# Build the image from model-serving directory
-	@docker build -t $(DOCKER_IMAGE) ./model-serving
+	@docker build -t $(DOCKER_IMAGE) -f ./model-serving/Dockerfile .
 	@echo "✓ Image built successfully"
-	@# Load image into Kind cluster so Kubernetes can use it
-	@# Kind clusters can't pull from local Docker registry by default
 	@echo "Loading image into Kind cluster..."
 	@kind load docker-image $(DOCKER_IMAGE) --name $(CLUSTER_NAME)
-	@echo "✓ Image loaded into cluster"
 
 #═══════════════════════════════════════════════════════════════════════
 # DEPLOY - Deploy model to Kubernetes using Seldon Core
@@ -126,38 +113,20 @@ build-image:
 
 .PHONY: deploy
 deploy: check-model-export
-	@echo "Deploying model to Kubernetes..."
-	@# Create ConfigMap with model files
-	@# This makes the model available to the inference container
-	@kubectl create configmap $(MODEL_NAME)-model \
-		--from-file=$(MODEL_DIR) \
-		--namespace=$(NAMESPACE) \
-		--dry-run=client -o yaml | kubectl apply -f -
-	@echo "✓ Model files uploaded as ConfigMap"
-	@# Apply the SeldonDeployment manifest
-	@# This creates the deployment, service, and monitoring resources
-	@kubectl apply -f k8s/seldon-deployment.yaml
-	@echo "✓ SeldonDeployment created"
-	@echo "Waiting for deployment to be ready..."
-	@kubectl wait --for=condition=ready pod \
-		-l app=$(MODEL_NAME)-default-0-classifier \
-		--namespace=$(NAMESPACE) \
-		--timeout=300s || true
-	@echo ""
-	@echo "✓ Deployment complete!"
-	@echo ""
+	@powershell -File "./scripts/deploy-model.ps1" -ModelName "$(MODEL_NAME)" -Namespace "$(NAMESPACE)" -ErrorAction Stop
 	@make status
 
 .PHONY: check-model-export
 check-model-export:
-	@if [ ! -d "$(MODEL_DIR)" ]; then \
-		echo "❌ Model directory '$(MODEL_DIR)' not found"; \
-		echo ""; \
-		echo "Please export a trained model first:"; \
-		echo "  python export_model.py --checkpoint <path-to-checkpoint.ckpt>"; \
-		echo ""; \
-		exit 1; \
-	fi
+	@powershell -Command " \
+		if (-not (Test-Path -Path '$(MODEL_DIR)' -PathType Container)) { \
+			Write-Host \"❌ Model directory '$(MODEL_DIR)' not found\"; \
+			Write-Host \"\"; \
+			Write-Host \"Please export a trained model first:\"; \
+			Write-Host \"  python export_model.py --checkpoint <path-to-checkpoint.ckpt>\"; \
+			Write-Host \"\"; \
+			exit 1; \
+		}"
 
 .PHONY: undeploy
 undeploy:
@@ -178,37 +147,22 @@ redeploy: undeploy build-image deploy
 test:
 	@echo "Sending test inference requests..."
 	@echo ""
-	@# Test with sample MRPC sentence pairs
 	@echo "Test 1: Similar sentences (should predict 1 = paraphrase)"
-	@kubectl run -it --rm test-client --image=curlimages/curl:latest --restart=Never -- \
-		curl -s -X POST http://$(MODEL_NAME)-default.$(NAMESPACE):8000/api/v1.0/predictions \
-		-H 'Content-Type: application/json' \
-		-d '{"data": {"ndarray": [["The cat sat on the mat", "A cat was sitting on a mat"]]}}' \
-		| python -m json.tool || echo "Request sent"
+	@kubectl run -it --rm test-client --image=curlimages/curl:latest --restart=Never -- powershell -Command "curl -s -X POST http://$(MODEL_NAME)-default.$(NAMESPACE):8000/api/v1.0/predictions -H 'Content-Type: application/json' -d '{\"data\": {\"ndarray\": [[\"The cat sat on the mat\", \"A cat was sitting on a mat\"]]}}' | python -m json.tool"
 	@echo ""
 	@echo "Test 2: Different sentences (should predict 0 = not paraphrase)"
-	@kubectl run -it --rm test-client --image=curlimages/curl:latest --restart=Never -- \
-		curl -s -X POST http://$(MODEL_NAME)-default.$(NAMESPACE):8000/api/v1.0/predictions \
-		-H 'Content-Type: application/json' \
-		-d '{"data": {"ndarray": [["The weather is nice", "I like pizza"]]}}' \
-		| python -m json.tool || echo "Request sent"
+	@kubectl run -it --rm test-client --image=curlimages/curl:latest --restart=Never -- powershell -Command "curl -s -X POST http://$(MODEL_NAME)-default.$(NAMESPACE):8000/api/v1.0/predictions -H 'Content-Type: application/json' -d '{\"data\": {\"ndarray\": [[\"The weather is nice\", \"I like pizza\"]]}}' | python -m json.tool"
 
 .PHONY: test-health
 test-health:
 	@echo "Checking model health..."
-	@kubectl run -it --rm test-client --image=curlimages/curl:latest --restart=Never -- \
-		curl -s http://$(MODEL_NAME)-default.$(NAMESPACE):8000/health/status
+	@kubectl run -it --rm test-client --image=curlimages/curl:latest --restart=Never -- powershell -Command "curl -s http://$(MODEL_NAME)-default.$(NAMESPACE):8000/health/status"
 
 .PHONY: test-load
 test-load:
 	@echo "Running basic load test (100 requests)..."
 	@echo "This tests if the model can handle concurrent requests"
-	@for i in $$(seq 1 100); do \
-		kubectl run test-client-$$i --image=curlimages/curl:latest --restart=Never -- \
-		curl -s -X POST http://$(MODEL_NAME)-default.$(NAMESPACE):8000/api/v1.0/predictions \
-		-H 'Content-Type: application/json' \
-		-d '{"data": {"ndarray": [["test sentence 1", "test sentence 2"]]}}' & \
-	done
+	@powershell -Command "for ($i = 1; $i -le 100; $i++) { kubectl run test-client-$i --image=curlimages/curl:latest --restart=Never -- curl -s -X POST http://$(MODEL_NAME)-default.$(NAMESPACE):8000/api/v1.0/predictions -H \'Content-Type: application/json\' -d \'{\\\"data\\\": {\\\"ndarray\\\": [[\\\"test sentence 1\\\", \\\"test sentence 2\\\"]]}}\'; Start-Sleep -Milliseconds 100 }"
 	@echo "Load test started. Check 'make logs' for results"
 
 #═══════════════════════════════════════════════════════════════════════
@@ -228,7 +182,7 @@ status:
 	@echo "════════════════════════════════════════════════════════════════"
 	@echo ""
 	@echo "SeldonDeployment:"
-	@kubectl get seldondeployment $(MODEL_NAME) -o wide || echo "Not found"
+	@powershell -Command "kubectl get seldondeployment $(MODEL_NAME) -o wide 2>$null || Write-Host \"Not found\""
 	@echo ""
 	@echo "Pods:"
 	@kubectl get pods -l app=$(MODEL_NAME)-default-0-classifier -o wide
@@ -251,13 +205,12 @@ describe:
 	@kubectl describe pods -l app=$(MODEL_NAME)-default-0-classifier
 	@echo ""
 	@echo "═══ Events ═══"
-	@kubectl get events --sort-by=.metadata.creationTimestamp | tail -20
+	@powershell -Command "kubectl get events --sort-by=.metadata.creationTimestamp | Select-Object -Last 20"
 
 .PHONY: metrics
 metrics:
 	@echo "Fetching Prometheus metrics..."
-	@kubectl run -it --rm metrics-client --image=curlimages/curl:latest --restart=Never -- \
-		curl -s http://$(MODEL_NAME)-default.$(NAMESPACE):8000/prometheus
+	@kubectl run -it --rm metrics-client --image=curlimages/curl:latest --restart=Never -- powershell -Command "curl -s http://$(MODEL_NAME)-default.$(NAMESPACE):8000/prometheus"
 
 #═══════════════════════════════════════════════════════════════════════
 # PORT FORWARDING - Access services from localhost
@@ -312,7 +265,7 @@ cleanup-cluster:
 .PHONY: shell
 shell:
 	@echo "Opening shell in model container..."
-	@kubectl exec -it $$(kubectl get pod -l app=$(MODEL_NAME)-default-0-classifier -o jsonpath='{.items[0].metadata.name}') -- /bin/bash
+	@powershell -Command "$podName = kubectl get pod -l app=$(MODEL_NAME)-default-0-classifier -o jsonpath='{.items[0].metadata.name}'; kubectl exec -it $podName -- /bin/bash"
 
 .PHONY: kubectl-config
 kubectl-config:

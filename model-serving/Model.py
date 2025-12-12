@@ -51,7 +51,8 @@ class Model:
 
         # Path where Seldon mounts the model files
         # This can be overridden with SELDON_MODEL_PATH environment variable
-        self.model_path = os.getenv("SELDON_MODEL_PATH", "/mnt/model")
+        # Since the model is now embedded in the Docker image, we load from /app/exported_model
+        self.model_path = os.getenv("SELDON_MODEL_PATH", "/app/exported_model")
         logger.info(f"Loading model from: {self.model_path}")
 
         try:

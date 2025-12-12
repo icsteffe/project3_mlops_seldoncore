@@ -1,0 +1,3 @@
+# This directory stores model checkpoints from training
+# Checkpoints are saved automatically during training with filenames like:
+# distilbert-mrpc-epoch=02-val_loss=0.35.ckpt

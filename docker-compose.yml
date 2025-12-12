@@ -6,6 +6,6 @@ services:
     image: hyperparameter-tuning:latest
     env_file: ".env"
     command: --wandb-project hyperparameter-tuning
-    # Uncomment to save model checkpoints to your local machine
-    # volumes:
-    #   - ./models:/app/models
+    # Save model checkpoints to your local machine
+    volumes:
+      - ./models:/app/models

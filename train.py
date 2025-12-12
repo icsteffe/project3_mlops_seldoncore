@@ -2,6 +2,7 @@ import argparse
 import wandb
 import lightning as L
 from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.callbacks import ModelCheckpoint
 
 from src import GLUEDataModule, GLUETransformer
 
@@ -20,6 +21,18 @@ def train_experiment(wandb_project: str, checkpoint_dir: str, **kwargs: dict):
         reinit="finish_previous",  # allows multiple runs in same script
     )
     logger = WandbLogger(project=wandb_project, save_dir=checkpoint_dir)  # use your experiment tracking tool's logger
+
+    # Configure checkpoint saving
+    # This saves the best model based on validation loss
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=checkpoint_dir,
+        filename='distilbert-mrpc-{epoch:02d}-{val_loss:.2f}',
+        monitor='val_loss',
+        mode='min',
+        save_top_k=3,  # Keep best 3 checkpoints
+        save_last=True,  # Also save the last checkpoint
+        verbose=True
+    )
 
     L.seed_everything(42)
 
@@ -41,7 +54,8 @@ def train_experiment(wandb_project: str, checkpoint_dir: str, **kwargs: dict):
         max_epochs=EPOCHS,
         accelerator="auto",
         devices=1,
-        logger=logger
+        logger=logger,
+        callbacks=[checkpoint_callback]  # Enable checkpoint saving
     )
     trainer.fit(model, datamodule=dm)
 

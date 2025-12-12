@@ -109,7 +109,7 @@ make setup
 docker compose up --build
 
 # 3. Export the trained model
-python export_model.py --checkpoint models/your-checkpoint.ckpt
+python export_model.py --checkpoint models/your-checkpoint.ckpt --output-dir exported_model
 
 # 4. Build inference container
 make build-image
@@ -220,8 +220,43 @@ Ensure you have the following installed:
 | **kubectl** | Kubernetes CLI | [kubernetes.io](https://kubernetes.io/docs/tasks/tools/) |
 | **kind** | Local Kubernetes | [kind.sigs.k8s.io](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) |
 | **helm** | K8s package manager | [helm.sh](https://helm.sh/docs/intro/install/) |
+| **uv** | Python package manager | [docs.astral.sh/uv/install/](https://docs.astral.sh/uv/install/) |
 
-**Quick Install (macOS/Linux):**
+### Windows Setup
+
+For Windows users, follow these steps to install the prerequisites:
+
+1.  **Open PowerShell as Administrator:** Search for "PowerShell" in the Start menu, right-click, and select "Run as administrator."
+
+2.  **Set PowerShell Execution Policy (if needed):**
+    If you encounter script execution errors, run this command:
+    ```powershell
+    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+    ```
+    Confirm with `Y` if prompted.
+
+3.  **Install Chocolatey (if not already installed):**
+    ```powershell
+    Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+    ```
+    *   If you see a warning about an existing installation, and it's not functional, you might need to manually delete the Chocolatey folder (`C:\ProgramData\chocolatey`) and then rerun the command.
+    *   Close and reopen PowerShell as Administrator after installation to ensure PATH updates.
+
+4.  **Install Make, kubectl, Kind, and Helm using Chocolatey:**
+    Once Chocolatey is installed and your PowerShell is reopened (as Administrator),
+    run the following commands one by one:
+    ```powershell
+    choco install make
+    choco install uv
+    choco install kubernetes-cli
+    choco install kind
+    choco install kubernetes-helm
+    ```
+    *   Close and reopen PowerShell as Administrator after these installations for PATH updates.
+
+5.  **Install Docker Desktop:** `kind` requires Docker. Download and install Docker Desktop from [docker.com](https://docs.docker.com/get-docker/). Ensure it's running and fully initialized before proceeding.
+
+### macOS/Linux Quick Install
 ```bash
 # macOS (using Homebrew)
 brew install docker kubectl kind helm

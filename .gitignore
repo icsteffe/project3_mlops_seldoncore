@@ -217,7 +217,10 @@ __marimo__/
 
 # wandb
 wandb/
-models/
+
+# Model checkpoints (but keep the directory)
+models/*.ckpt
+models/lightning_logs/
 
 # Exported models for deployment
 exported_model/

@@ -15,9 +15,10 @@ kubectl version --client  # Should show v1.24+
 kind version              # Should show v0.17+
 helm version              # Should show v3+
 python --version          # Should show 3.12+
+uv --version              # Should show v0.1+
 ```
 
-**Don't have them?** See [installation links](README.md#prerequisites-for-deployment).
+**Don't have them?** Follow the detailed Windows installation instructions in [README.md#windows-setup](README.md#windows-setup).
 
 ---
 
@@ -61,14 +62,26 @@ docker compose up --build
 
 ---
 
+## Step 2.5: Install Python Dependencies (1 minute)
+
+If running locally (not in Docker) or exporting a model, install Python dependencies:
+
+```bash
+# Activate your Python virtual environment first
+.\venv\Scripts\Activate.ps1
+
+# Then install dependencies
+uv sync --extra cpu  # or --extra cu129 for GPU
+```
+
+---
+
 ## Step 3: Export Model (30 seconds)
 
 Convert your checkpoint to deployment format:
 
 ```bash
-python export_model.py \
-  --checkpoint models/your-checkpoint.ckpt \
-  --output-dir exported_model
+python export_model.py --checkpoint models/your-checkpoint.ckpt --output-dir exported_model
 ```
 
 **What this creates:**
