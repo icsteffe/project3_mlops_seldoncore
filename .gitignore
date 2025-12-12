@@ -218,3 +218,10 @@ __marimo__/
 # wandb
 wandb/
 models/
+
+# Exported models for deployment
+exported_model/
+
+# Kubernetes secrets and configs
+*.kubeconfig
+k8s-secrets/

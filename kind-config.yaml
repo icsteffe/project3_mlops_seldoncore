@@ -1,0 +1,59 @@
+# Kind (Kubernetes in Docker) cluster configuration
+# This file defines how to create a local Kubernetes cluster for testing
+
+# What is Kind?
+# Kind runs a Kubernetes cluster inside Docker containers.
+# It's perfect for local development and testing because:
+# - Fast to create/destroy (seconds, not minutes)
+# - Isolated from your system
+# - Uses minimal resources
+# - Supports most Kubernetes features
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+# Cluster name - this will be prefixed with "kind-"
+# So this creates a cluster named "kind-mlops-seldon"
+name: mlops-seldon
+
+# Nodes define the cluster topology
+# For learning, a single node is sufficient
+# In production, you'd have multiple nodes for high availability
+nodes:
+  # Control plane node - runs Kubernetes management components
+  - role: control-plane
+    # Port mappings expose cluster services to your host machine
+    # This allows you to access services without port-forwarding
+    extraPortMappings:
+      # Map NodePort 30080 to localhost:8080
+      # This lets us access our model at http://localhost:8080
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP
+        # Why 30080? NodePort services must use ports 30000-32767
+        # We defined this in our Service manifest (k8s/seldon-deployment.yaml)
+
+  # Optional: Add worker nodes for multi-node testing
+  # Uncomment below to simulate a production-like cluster
+  # - role: worker
+  # - role: worker
+
+# Feature gates enable experimental or alpha Kubernetes features
+# For learning, we don't need any special features
+# featureGates:
+#   "CSIMigration": true
+
+# Networking configuration
+networking:
+  # Disable the default CNI (Container Network Interface)
+  # Kind includes a simple default networking setup that works for most cases
+  disableDefaultCNI: false
+
+  # Pod and Service CIDR ranges
+  # These define the IP address ranges used by pods and services
+  # Default values work fine for local development
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+
+# Note: This is a minimal configuration for learning
+# For advanced use cases, see: https://kind.sigs.k8s.io/docs/user/configuration/

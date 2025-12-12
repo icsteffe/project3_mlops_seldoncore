@@ -1,0 +1,165 @@
+# SeldonDeployment Custom Resource Definition (CRD)
+# This is the main manifest that tells Seldon Core how to deploy our model
+
+# What is a CRD?
+# A CRD extends Kubernetes with custom resources. Instead of writing
+# complex Deployment, Service, and Ingress manifests manually, we use
+# Seldon's high-level SeldonDeployment resource.
+
+# What does Seldon Core do with this?
+# When you apply this manifest, Seldon's operator automatically creates:
+# - Kubernetes Deployment (runs our model container)
+# - Kubernetes Service (exposes model endpoints)
+# - ConfigMaps (for configuration)
+# - ServiceMonitor (for Prometheus metrics)
+
+apiVersion: machinelearning.seldon.io/v1
+kind: SeldonDeployment
+metadata:
+  name: distilbert-classifier
+  namespace: default
+  labels:
+    app: distilbert-classifier
+    # These labels help organize and filter resources
+    task: text-classification
+    framework: pytorch
+spec:
+  # Deployment name - used to identify this model deployment
+  name: distilbert-classifier
+
+  # Predictors define the inference graph
+  # A predictor is a model or pipeline that handles predictions
+  # You can have multiple predictors for A/B testing or canary deployments
+  predictors:
+    - name: default
+      # Graph defines the prediction flow
+      # For simple deployments, it's just one model
+      # For complex deployments, you can chain models (preprocessor -> model -> postprocessor)
+      graph:
+        # Implementation type - tells Seldon what kind of server to expect
+        # SKLEARN_SERVER, XGBOOST_SERVER, etc. are pre-built
+        # We use a custom implementation, so we don't specify one here
+
+        # Model name - must match the Python class name in Model.py
+        name: classifier
+
+        # Type of component: MODEL, TRANSFORMER, ROUTER, COMBINER, or OUTPUT_TRANSFORMER
+        type: MODEL
+
+        # Endpoint configuration
+        endpoint:
+          # Use REST API (alternative is gRPC)
+          type: REST
+
+        # Model configuration
+        # This section specifies the container and model storage
+        children: []  # No downstream models in our simple case
+
+      # Component specs define the actual containers
+      componentSpecs:
+        - spec:
+            # This is a standard Kubernetes Pod spec
+            # Seldon wraps this in a Deployment automatically
+
+            containers:
+              - name: classifier
+                # Docker image with our inference server
+                # In production, this would be pushed to a registry (Docker Hub, ECR, etc.)
+                # For local Kind testing, we'll load the image directly
+                image: distilbert-serving:latest
+
+                # Image pull policy
+                # IfNotPresent: use local image if available (good for Kind)
+                # Always: pull from registry every time (good for production)
+                imagePullPolicy: IfNotPresent
+
+                # Resource requests and limits
+                # Requests: minimum resources guaranteed
+                # Limits: maximum resources allowed
+                resources:
+                  requests:
+                    # Minimum CPU: 100 millicores (0.1 CPU)
+                    cpu: "100m"
+                    # Minimum memory: 512 MB
+                    memory: "512Mi"
+                  limits:
+                    # Maximum CPU: 1 core
+                    cpu: "1"
+                    # Maximum memory: 2 GB
+                    memory: "2Gi"
+
+                # Environment variables
+                env:
+                  - name: SELDON_LOG_LEVEL
+                    value: "INFO"
+                  # You can add more env vars here if needed
+                  # - name: CUSTOM_VAR
+                  #   value: "value"
+
+                # Liveness probe - checks if container is alive
+                # If this fails, Kubernetes restarts the container
+                livenessProbe:
+                  httpGet:
+                    path: /health/ping
+                    port: 5000
+                    scheme: HTTP
+                  initialDelaySeconds: 30  # Wait 30s before first check
+                  periodSeconds: 10         # Check every 10s
+                  timeoutSeconds: 5         # Timeout after 5s
+                  failureThreshold: 3       # Restart after 3 failures
+
+                # Readiness probe - checks if container is ready to serve traffic
+                # If this fails, Kubernetes stops sending traffic
+                readinessProbe:
+                  httpGet:
+                    path: /health/status
+                    port: 5000
+                    scheme: HTTP
+                  initialDelaySeconds: 20  # Wait 20s before first check
+                  periodSeconds: 5          # Check every 5s
+                  timeoutSeconds: 3         # Timeout after 3s
+                  failureThreshold: 3       # Mark not ready after 3 failures
+
+            # Termination grace period
+            # How long to wait for graceful shutdown before force-killing
+            terminationGracePeriodSeconds: 30
+
+      # Replicas - how many pods to run
+      # For learning, 1 is enough
+      # In production, use 2+ for high availability
+      replicas: 1
+
+      # Traffic percentage for this predictor
+      # Useful for A/B testing (e.g., 90% to stable model, 10% to new model)
+      traffic: 100
+
+---
+# Kubernetes Service for external access
+# This creates a NodePort service to access the model from outside the cluster
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: distilbert-classifier-external
+  namespace: default
+  labels:
+    app: distilbert-classifier
+spec:
+  type: NodePort
+  selector:
+    # This selector matches pods created by Seldon
+    # Seldon automatically adds this label to pods
+    app: distilbert-classifier-default-0-classifier
+
+  ports:
+    # HTTP port for predictions
+    - name: http
+      port: 8000
+      targetPort: 9000  # Seldon's default prediction port
+      nodePort: 30080   # External port (30000-32767 range)
+      protocol: TCP
+
+# Why do we need this Service?
+# - SeldonDeployment creates an internal Service automatically
+# - This NodePort Service exposes it externally for testing
+# - In production, you'd use an Ingress or LoadBalancer instead
