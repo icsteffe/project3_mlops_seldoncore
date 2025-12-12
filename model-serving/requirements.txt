@@ -1,0 +1,14 @@
+# Core dependencies for Seldon Core model serving
+# These are needed to run our custom inference server
+
+# Transformers for our DistilBERT model
+transformers>=4.57.0
+
+# PyTorch for model inference (CPU version for smaller images)
+torch>=2.9.0
+
+# NumPy for array operations (Seldon expects numpy arrays)
+numpy>=1.24.0
+
+# Additional transformers dependencies
+tokenizers>=0.15.0
