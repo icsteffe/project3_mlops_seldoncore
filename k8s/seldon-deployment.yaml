@@ -80,18 +80,18 @@ spec:
                   requests:
                     # Minimum CPU: 100 millicores (0.1 CPU)
                     cpu: "100m"
-                    # Minimum memory: 512 MB
+                    # Minimum memory: 512Mi
                     memory: "512Mi"
                   limits:
-                    # Maximum CPU: 1 core
-                    cpu: "1"
-                    # Maximum memory: 2 GB
+                    # Maximum memory: 2Gi (model + overhead)
                     memory: "2Gi"
 
                 # Environment variables
                 env:
                   - name: SELDON_LOG_LEVEL
                     value: "INFO"
+                  - name: PYTHONUNBUFFERED
+                    value: "1"
                   # You can add more env vars here if needed
                   # - name: CUSTOM_VAR
                   #   value: "value"
@@ -101,9 +101,9 @@ spec:
                 livenessProbe:
                   httpGet:
                     path: /health/ping
-                    port: 5000
+                    port: 9000
                     scheme: HTTP
-                  initialDelaySeconds: 30  # Wait 30s before first check
+                  initialDelaySeconds: 60  # Wait 60s before first check
                   periodSeconds: 10         # Check every 10s
                   timeoutSeconds: 5         # Timeout after 5s
                   failureThreshold: 3       # Restart after 3 failures
@@ -113,9 +113,9 @@ spec:
                 readinessProbe:
                   httpGet:
                     path: /health/status
-                    port: 5000
+                    port: 9000
                     scheme: HTTP
-                  initialDelaySeconds: 20  # Wait 20s before first check
+                  initialDelaySeconds: 60  # Wait 60s before first check
                   periodSeconds: 5          # Check every 5s
                   timeoutSeconds: 3         # Timeout after 3s
                   failureThreshold: 3       # Mark not ready after 3 failures
@@ -149,13 +149,14 @@ spec:
   selector:
     # This selector matches pods created by Seldon
     # Seldon automatically adds this label to pods
-    app: distilbert-classifier-default-0-classifier
+    # Fixed to use stable selector instead of specific pod name
+    seldon-app: distilbert-classifier-default
 
   ports:
     # HTTP port for predictions
     - name: http
       port: 8000
-      targetPort: 9000  # Seldon's default prediction port
+      targetPort: 8000  # Target the seldon-container-engine, not the classifier directly
       nodePort: 30080   # External port (30000-32767 range)
       protocol: TCP
 

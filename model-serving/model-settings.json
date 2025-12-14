@@ -1,0 +1,7 @@
+{
+  "name": "classifier",
+  "implementation": "Model",
+  "parameters": {
+    "version": "v0.1.0"
+  }
+}

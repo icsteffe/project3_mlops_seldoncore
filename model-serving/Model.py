@@ -68,12 +68,10 @@ class Model:
             self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
             logger.info(f"Loaded tokenizer with vocab size: {len(self.tokenizer)}")
 
-            # Initialize the model architecture
-            # We use the base model name from config to get the right architecture
-            model_name = self.config._name_or_path
-            self.model = AutoModelForSequenceClassification.from_pretrained(
-                model_name,
-                config=self.config
+            # Initialize the model architecture from config
+            # We'll load the trained weights separately from model.pt
+            self.model = AutoModelForSequenceClassification.from_config(
+                self.config
             )
 
             # Load the trained weights

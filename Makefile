@@ -54,7 +54,7 @@ help:
 
 .PHONY: setup
 setup: check-prerequisites setup-cluster install-seldon
-	@echo "✓ Setup complete!"
+	@echo "v Setup complete!"
 	@echo ""
 	@echo "Next steps:"
 	@echo "  1. Export a trained model:  python export_model.py --checkpoint <path>"
@@ -68,7 +68,7 @@ check-prerequisites:
 	@powershell -Command "if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) { Write-Host \"❌ kubectl is required but not installed. See: https://kubernetes.io/docs/tasks/tools/\"; exit 1; }"
 	@powershell -Command "if (-not (Get-Command kind -ErrorAction SilentlyContinue)) { Write-Host \"❌ Kind is required but not installed. See: https://kind.sigs.k8s.io/docs/user/quick-start/#installation\"; exit 1; }"
 	@powershell -Command "if (-not (Get-Command helm -ErrorAction SilentlyContinue)) { Write-Host \"❌ Helm is required but not installed. See: https://helm.sh/docs/intro/install/\"; exit 1; }"
-	@echo "✓ All prerequisites installed"
+	@echo "v All prerequisites installed"
 
 .PHONY: setup-cluster
 setup-cluster:
@@ -89,11 +89,11 @@ install-seldon:
 		--set istio.enabled=false \
 		--wait \
 		--timeout 5m
-	@echo "✓ Seldon Core installed"
+	@echo "v Seldon Core installed"
 	@echo "Waiting for Seldon operator to be ready..."
 	@kubectl wait --for=condition=available --timeout=300s \
 		deployment/seldon-controller-manager -n seldon-system
-	@echo "✓ Seldon Core is ready"
+	@echo "v Seldon Core is ready"
 
 #═══════════════════════════════════════════════════════════════════════
 # BUILD - Create Docker image with inference server
@@ -103,7 +103,7 @@ install-seldon:
 build-image:
 	@echo "Building Docker image '$(DOCKER_IMAGE)'..."
 	@docker build -t $(DOCKER_IMAGE) -f ./model-serving/Dockerfile .
-	@echo "✓ Image built successfully"
+	@echo "v Image built successfully"
 	@echo "Loading image into Kind cluster..."
 	@kind load docker-image $(DOCKER_IMAGE) --name $(CLUSTER_NAME)
 
@@ -120,12 +120,12 @@ deploy: check-model-export
 check-model-export:
 	@powershell -Command " \
 		if (-not (Test-Path -Path '$(MODEL_DIR)' -PathType Container)) { \
-			Write-Host \"❌ Model directory '$(MODEL_DIR)' not found\"; \
+			Write-Host \"x Model directory '$(MODEL_DIR)' not found\"; \
 			Write-Host \"\"; \
 			Write-Host \"Please export a trained model first:\"; \
 			Write-Host \"  python export_model.py --checkpoint <path-to-checkpoint.ckpt>\"; \
 			Write-Host \"\"; \
-			exit 1; \
+		exit 1; \
 		}"
 
 .PHONY: undeploy
@@ -133,11 +133,11 @@ undeploy:
 	@echo "Removing deployment..."
 	@kubectl delete -f k8s/seldon-deployment.yaml --ignore-not-found=true
 	@kubectl delete configmap $(MODEL_NAME)-model --ignore-not-found=true
-	@echo "✓ Deployment removed"
+	@echo "v Deployment removed"
 
 .PHONY: redeploy
 redeploy: undeploy build-image deploy
-	@echo "✓ Redeployment complete"
+	@echo "v Redeployment complete"
 
 #═══════════════════════════════════════════════════════════════════════
 # TEST - Validate the deployment works correctly
@@ -242,7 +242,7 @@ forward-metrics:
 
 .PHONY: cleanup
 cleanup: cleanup-deploy cleanup-cluster
-	@echo "✓ Complete cleanup finished"
+	@echo "v Complete cleanup finished"
 
 .PHONY: cleanup-deploy
 cleanup-deploy:
@@ -250,13 +250,13 @@ cleanup-deploy:
 	@kubectl delete seldondeployment $(MODEL_NAME) --ignore-not-found=true
 	@kubectl delete configmap $(MODEL_NAME)-model --ignore-not-found=true
 	@kubectl delete svc $(MODEL_NAME)-external --ignore-not-found=true
-	@echo "✓ Deployment cleaned up"
+	@echo "v Deployment cleaned up"
 
 .PHONY: cleanup-cluster
 cleanup-cluster:
 	@echo "Deleting Kind cluster '$(CLUSTER_NAME)'..."
 	@kind delete cluster --name $(CLUSTER_NAME)
-	@echo "✓ Cluster deleted"
+	@echo "v Cluster deleted"
 
 #═══════════════════════════════════════════════════════════════════════
 # UTILITY TARGETS
@@ -271,4 +271,4 @@ shell:
 kubectl-config:
 	@echo "Configuring kubectl context..."
 	@kubectl config use-context kind-$(CLUSTER_NAME)
-	@echo "✓ kubectl configured to use Kind cluster"
+	@echo "v kubectl configured to use Kind cluster"

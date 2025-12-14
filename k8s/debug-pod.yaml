@@ -1,0 +1,33 @@
+# Debug Pod - bypasses Seldon Core to test the container directly
+# This gives us full control without automatic probe injection
+apiVersion: v1
+kind: Pod
+metadata:
+  name: distilbert-debug
+  namespace: default
+  labels:
+    app: distilbert-debug
+spec:
+  containers:
+    - name: classifier
+      image: distilbert-serving:latest
+      imagePullPolicy: IfNotPresent
+
+      # Sleep command - prevents container from starting the service
+      command: ["/bin/sh", "-c", "sleep 3600"]
+
+      env:
+        - name: SELDON_LOG_LEVEL
+          value: "DEBUG"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "512Mi"
+        # No limits - let it use whatever it needs for debugging
+
+      # NO PROBES - we want the container to stay alive
+
+  restartPolicy: Never

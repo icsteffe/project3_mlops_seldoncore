@@ -1,0 +1,7 @@
+{
+  "debug": true,
+  "host": "0.0.0.0",
+  "http_port": 9000,
+  "grpc_port": 9500,
+  "metrics_port": 6000
+}
